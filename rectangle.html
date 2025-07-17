@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Geofence Tracker</title>
+  <title>Geofence Tracker with Motion Sensor</title>
   <style>
     body {
       font-family: 'Segoe UI', sans-serif;
@@ -18,9 +18,7 @@
       border-radius: 10px;
       box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
-    h2 {
-      margin-top: 0;
-    }
+    h2 { margin-top: 0; }
     button {
       padding: 10px 15px;
       margin: 10px 5px;
@@ -30,28 +28,21 @@
       color: white;
       cursor: pointer;
     }
-    button.clear {
-      background-color: #cc0000;
-    }
-    .status {
-      font-size: 20px;
-      font-weight: bold;
-      margin-top: 10px;
-    }
+    button.clear { background-color: #cc0000; }
+    .status { font-size: 20px; font-weight: bold; margin-top: 10px; }
     .revisited { color: green; }
     .new { color: red; }
     ul { text-align: left; padding-left: 20px; }
-    .accuracy {
-      font-size: 14px;
-      margin-top: 5px;
-    }
+    .accuracy { font-size: 14px; margin-top: 5px; }
+    .motion-status { font-size: 14px; color: #444; margin-top: 5px; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h2>📍 Circular Geofence Tracker</h2>
+    <h2>📍 Motion-Based Geofence Tracker</h2>
     <p id="locationInfo">Waiting for location...</p>
-    <p id="accuracyInfo" class="accuracy">Checking accuracy...</p>
+    <p id="accuracyInfo" class="accuracy">GPS accuracy: --</p>
+    <p id="motionStatus" class="motion-status">Motion: --</p>
     <div id="status" class="status">Status: --</div>
 
     <button onclick="markZone()">➕ Mark Current Location</button>
@@ -62,16 +53,17 @@
   </div>
 
   <script>
-    const radiusThresholdMeters = 3;   // Geofence zone radius
-    const movementThreshold = 2;       // Ignore if movement < 2 meters
-    const maxAllowedAccuracy = 7;      // Require GPS accuracy < 7 meters
+    const radiusThresholdMeters = 3;
+    const movementThreshold = 2;
+    const maxAllowedAccuracy = 7;
 
     let currentPosition = null;
     let lastKnownPosition = null;
+    let allowGPSUpdate = false;
 
     function haversine(lat1, lon1, lat2, lon2) {
-      const R = 6371000; // Earth radius in meters
-      const toRad = angle => angle * Math.PI / 180;
+      const R = 6371000;
+      const toRad = deg => deg * Math.PI / 180;
       const dLat = toRad(lat2 - lat1);
       const dLon = toRad(lon2 - lon1);
       const a = Math.sin(dLat/2)**2 +
@@ -91,35 +83,21 @@
         position => {
           const { latitude, longitude, accuracy } = position.coords;
           const newPosition = { lat: latitude, lon: longitude };
-
           const accuracyElem = document.getElementById("accuracyInfo");
 
-          // Show color-coded accuracy feedback
+          // Update accuracy UI
           accuracyElem.innerText = `📡 Accuracy: ±${accuracy.toFixed(1)} meters`;
-          if (accuracy <= 7) {
-            accuracyElem.style.color = "green";
-          } else if (accuracy <= 15) {
-            accuracyElem.style.color = "orange";
-          } else {
-            accuracyElem.style.color = "red";
-          }
+          accuracyElem.style.color = accuracy <= 7 ? "green" : (accuracy <= 15 ? "orange" : "red");
 
-          // Skip poor accuracy
-          if (accuracy > maxAllowedAccuracy) {
-            console.log("Skipping update due to poor accuracy");
-            return;
-          }
+          // Skip inaccurate or unnecessary updates
+          if (accuracy > maxAllowedAccuracy || !allowGPSUpdate) return;
 
-          // Skip small movements
           if (lastKnownPosition) {
             const moved = haversine(
               lastKnownPosition.lat, lastKnownPosition.lon,
               newPosition.lat, newPosition.lon
             );
-            if (moved < movementThreshold) {
-              console.log("Ignoring minor movement:", moved.toFixed(2), "meters");
-              return;
-            }
+            if (moved < movementThreshold) return;
           }
 
           currentPosition = newPosition;
@@ -190,9 +168,39 @@
         : `<span class="new">🆕 New Location</span>`;
     }
 
-    // Start tracking
+    // 🚀 Motion detection using DeviceMotionEvent
+    function initMotionDetection() {
+      const motionText = document.getElementById("motionStatus");
+      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        // iOS
+        DeviceMotionEvent.requestPermission().then(response => {
+          if (response === 'granted') {
+            window.addEventListener('devicemotion', handleMotion);
+          }
+        }).catch(console.error);
+      } else {
+        // Android
+        window.addEventListener('devicemotion', handleMotion);
+      }
+
+      function handleMotion(event) {
+        const acc = event.accelerationIncludingGravity;
+        if (!acc) return;
+        const magnitude = Math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2);
+        if (magnitude > 1.5) {
+          motionText.innerText = "Motion: 🚶 Device is moving";
+          allowGPSUpdate = true;
+        } else {
+          motionText.innerText = "Motion: 🛑 Device is still";
+          allowGPSUpdate = false;
+        }
+      }
+    }
+
+    // Init
     updateLocation();
     displayZones();
+    initMotionDetection();
   </script>
 </body>
 </html>
