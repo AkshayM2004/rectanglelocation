@@ -1,178 +1,218 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Live Revisit Tracker</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Geo Revisit Tracker</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      margin: 0; padding: 0;
-      background: #e8f7ff;
-      display: flex; flex-direction: column; align-items: center;
-    }
-    .container {
-      padding: 20px;
-      width: 100%; max-width: 600px;
+      margin: 0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
     }
     canvas {
-      border: 1px solid #ccc;
-      width: 100%;
-      height: 300px;
-      background: #fff;
+      flex: 1;
+      border: 2px solid #ccc;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-around;
+      padding: 10px;
+      background: #f0f0f0;
     }
     button {
-      margin: 5px; padding: 10px 15px;
+      padding: 10px 20px;
+      margin: 5px;
       font-size: 16px;
-      border-radius: 6px;
-      border: none;
-      cursor: pointer;
     }
-    button.set { background-color: #007bff; color: white; }
-    button.clear { background-color: #dc3545; color: white; }
     #status {
-      font-size: 18px;
-      margin-top: 10px;
+      font-size: 20px;
+      text-align: center;
+      padding: 10px;
       font-weight: bold;
+    }
+    input[type="range"] {
+      width: 100px;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h2>📍 Live Rectangle Revisit Tracker</h2>
-    <canvas id="mapCanvas" width="400" height="300"></canvas>
-    <div>
-      <button class="set" onclick="setPoint(1)">Set Point 1</button>
-      <button class="set" onclick="setPoint(2)">Set Point 2</button>
-      <button class="clear" onclick="clearData()">Clear</button>
-    </div>
-    <div id="status">Waiting for GPS...</div>
-  </div>
 
-  <script>
-    let point1 = null, point2 = null, currentPos = null;
-    const canvas = document.getElementById('mapCanvas');
-    const ctx = canvas.getContext('2d');
-    const statusEl = document.getElementById('status');
+<canvas id="mapCanvas"></canvas>
 
-    function savePoints() {
-      localStorage.setItem('rectanglePoints', JSON.stringify({ point1, point2 }));
+<div class="controls">
+  <button onclick="setPoint1()">Set Point 1</button>
+  <button onclick="setPoint2()">Set Point 2</button>
+  <button onclick="clearRectangle()">Clear</button>
+  <label>Buffer (m):
+    <input type="range" min="1" max="3" value="2" id="bufferSlider" oninput="updateBufferLabel()">
+    <span id="bufferValue">2</span>
+  </label>
+</div>
+
+<div id="status">⏳ Waiting for location...</div>
+
+<script>
+  const canvas = document.getElementById("mapCanvas");
+  const ctx = canvas.getContext("2d");
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight * 0.75;
+
+  let point1 = null;
+  let point2 = null;
+  let currentLocation = null;
+  let bufferDistance = 2;
+
+  function updateBufferLabel() {
+    bufferDistance = parseInt(document.getElementById("bufferSlider").value);
+    document.getElementById("bufferValue").textContent = bufferDistance;
+  }
+
+  function haversineDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3;
+    const toRad = x => x * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon/2)**2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  function isWithinRectangleWithBuffer(current, rect, threshold = 2) {
+    const minLat = Math.min(rect.point1.lat, rect.point2.lat);
+    const maxLat = Math.max(rect.point1.lat, rect.point2.lat);
+    const minLng = Math.min(rect.point1.lng, rect.point2.lng);
+    const maxLng = Math.max(rect.point1.lng, rect.point2.lng);
+
+    const inside = (
+      current.lat >= minLat &&
+      current.lat <= maxLat &&
+      current.lng >= minLng &&
+      current.lng <= maxLng
+    );
+
+    if (inside) return true;
+
+    const corners = [
+      { lat: minLat, lng: minLng },
+      { lat: minLat, lng: maxLng },
+      { lat: maxLat, lng: minLng },
+      { lat: maxLat, lng: maxLng },
+    ];
+
+    for (const corner of corners) {
+      const d = haversineDistance(current.lat, current.lng, corner.lat, corner.lng);
+      if (d <= threshold) return true;
     }
 
-    function loadPoints() {
-      const saved = localStorage.getItem('rectanglePoints');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        point1 = parsed.point1;
-        point2 = parsed.point2;
-      }
+    return false;
+  }
+
+  function setPoint1() {
+    if (!currentLocation) return alert("Wait for location fix.");
+    point1 = { ...currentLocation };
+    saveRectangle();
+  }
+
+  function setPoint2() {
+    if (!currentLocation) return alert("Wait for location fix.");
+    point2 = { ...currentLocation };
+    saveRectangle();
+  }
+
+  function saveRectangle() {
+    if (point1 && point2) {
+      const rect = { point1, point2 };
+      localStorage.setItem("rectangle", JSON.stringify(rect));
+    }
+  }
+
+  function loadRectangle() {
+    const data = localStorage.getItem("rectangle");
+    if (data) {
+      const rect = JSON.parse(data);
+      point1 = rect.point1;
+      point2 = rect.point2;
+    }
+  }
+
+  function clearRectangle() {
+    localStorage.removeItem("rectangle");
+    point1 = null;
+    point2 = null;
+    updateCanvas();
+  }
+
+  function showStatus(msg) {
+    document.getElementById("status").textContent = msg;
+  }
+
+  function updateCanvas() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (point1 && point2) {
+      // Draw rectangle
+      ctx.strokeStyle = "green";
+      ctx.lineWidth = 2;
+      const [x1, y1] = toCanvasCoords(point1);
+      const [x2, y2] = toCanvasCoords(point2);
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
     }
 
-    function clearData() {
-      localStorage.removeItem('rectanglePoints');
-      point1 = point2 = null;
-      updateStatus("🗑 Data cleared");
-      drawCanvas();
+    if (currentLocation) {
+      const [x, y] = toCanvasCoords(currentLocation);
+      ctx.fillStyle = "blue";
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.fill();
     }
+  }
 
-    function setPoint(num) {
-      if (!currentPos) {
-        alert("Waiting for GPS...");
-        return;
-      }
-      const point = { lat: currentPos.lat, lon: currentPos.lon };
-      if (num === 1) point1 = point;
-      else point2 = point;
+  function toCanvasCoords(loc) {
+    // Map lat/lng to canvas for display (relative view)
+    const centerLat = currentLocation ? currentLocation.lat : 0;
+    const centerLng = currentLocation ? currentLocation.lng : 0;
+    const scale = 100000; // Increase or decrease to scale display
+    const x = canvas.width / 2 + (loc.lng - centerLng) * scale;
+    const y = canvas.height / 2 - (loc.lat - centerLat) * scale;
+    return [x, y];
+  }
 
-      savePoints();
-      drawCanvas();
+  function checkLocation() {
+    if (point1 && point2 && currentLocation) {
+      const inside = isWithinRectangleWithBuffer(currentLocation, { point1, point2 }, bufferDistance);
+      showStatus(inside ? "✅ Revisited" : "🆕 New Location");
+    } else {
+      showStatus("⚠️ Set both points");
     }
+  }
 
-    function updateStatus(text) {
-      statusEl.textContent = text;
-    }
+  // Live location tracking
+  navigator.geolocation.watchPosition(pos => {
+    currentLocation = {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude
+    };
+    checkLocation();
+    updateCanvas();
+  }, err => {
+    console.error(err);
+    showStatus("❌ Location error");
+  }, {
+    enableHighAccuracy: true,
+    maximumAge: 0,
+    timeout: 10000
+  });
 
-    function drawCanvas() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const scale = 100000;
+  // On load
+  loadRectangle();
+  updateBufferLabel();
+</script>
 
-      if (point1 && point2) {
-        const x1 = (point1.lon - baseLon()) * scale + 200;
-        const y1 = (point1.lat - baseLat()) * -scale + 150;
-        const x2 = (point2.lon - baseLon()) * scale + 200;
-        const y2 = (point2.lat - baseLat()) * -scale + 150;
-
-        ctx.fillStyle = "rgba(0, 200, 0, 0.2)";
-        ctx.strokeStyle = "green";
-        ctx.beginPath();
-        ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
-        ctx.fill();
-        ctx.stroke();
-      }
-
-      if (currentPos) {
-        const x = (currentPos.lon - baseLon()) * scale + 200;
-        const y = (currentPos.lat - baseLat()) * -scale + 150;
-
-        ctx.fillStyle = "blue";
-        ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    function baseLat() {
-      return (point1?.lat || currentPos?.lat || 0);
-    }
-
-    function baseLon() {
-      return (point1?.lon || currentPos?.lon || 0);
-    }
-
-    function isInsideRect(pos) {
-      if (!point1 || !point2) return false;
-      const minLat = Math.min(point1.lat, point2.lat);
-      const maxLat = Math.max(point1.lat, point2.lat);
-      const minLon = Math.min(point1.lon, point2.lon);
-      const maxLon = Math.max(point1.lon, point2.lon);
-
-      return (
-        pos.lat >= minLat &&
-        pos.lat <= maxLat &&
-        pos.lon >= minLon &&
-        pos.lon <= maxLon
-      );
-    }
-
-    function trackLocation() {
-      if (!navigator.geolocation) {
-        updateStatus("Geolocation not supported.");
-        return;
-      }
-
-      navigator.geolocation.watchPosition(
-        (position) => {
-          currentPos = {
-            lat: parseFloat(position.coords.latitude.toFixed(6)),
-            lon: parseFloat(position.coords.longitude.toFixed(6))
-          };
-
-          const inside = isInsideRect(currentPos);
-          updateStatus(inside ? "✅ Revisited" : "🆕 New Location");
-
-          drawCanvas();
-        },
-        () => updateStatus("❌ Failed to get location"),
-        {
-          enableHighAccuracy: true,
-          maximumAge: 0,
-          timeout: 5000
-        }
-      );
-    }
-
-    loadPoints();
-    trackLocation();
-  </script>
 </body>
 </html>
