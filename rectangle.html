@@ -1,180 +1,153 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Rectangle Revisit Tracker</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <title>Geofence Tracker</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      margin: 10px;
-      background: #f0f0f0;
-    }
-
-    h2 {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f0f9ff;
+      padding: 20px;
       text-align: center;
     }
-
-    canvas {
-      border: 1px solid #000;
-      display: block;
+    .container {
+      max-width: 500px;
       margin: auto;
-      background: #fff;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
-
-    #controls {
-      text-align: center;
+    h2 {
+      margin-top: 0;
+    }
+    button {
+      padding: 10px 15px;
+      margin: 10px 5px;
+      border: none;
+      border-radius: 6px;
+      background: #0077cc;
+      color: white;
+      cursor: pointer;
+    }
+    button.clear {
+      background-color: #cc0000;
+    }
+    .status {
+      font-size: 20px;
+      font-weight: bold;
       margin-top: 10px;
     }
-
-    button, select {
-      margin: 5px;
-      padding: 8px 12px;
-      font-size: 16px;
-    }
-
-    #status {
-      font-size: 20px;
-      text-align: center;
-      margin-top: 15px;
-      font-weight: bold;
-    }
+    .revisited { color: green; }
+    .new { color: red; }
+    ul { text-align: left; padding-left: 20px; }
   </style>
 </head>
 <body>
-  <h2>🔍 Rectangle Revisit Tracker</h2>
+  <div class="container">
+    <h2>📍 Circular Geofence Tracker</h2>
+    <p id="locationInfo">Waiting for location...</p>
+    <div id="status" class="status">Status: --</div>
 
-  <canvas id="canvas" width="360" height="360"></canvas>
+    <button onclick="markZone()">➕ Mark Current Location</button>
+    <button class="clear" onclick="clearZones()">🗑 Clear Zones</button>
 
-  <div id="controls">
-    <button onclick="setFirstPoint()">📍 Set First Point</button>
-    <button onclick="setSecondPoint()">📍 Set Second Point</button>
-    <select id="thresholdSelect" onchange="updateBufferLabel()">
-      <option value="1">1 meter</option>
-      <option value="2" selected>2 meters</option>
-      <option value="3">3 meters</option>
-    </select>
-    <button onclick="clearAll()">🗑️ Clear Rectangles</button>
+    <h3>📌 Saved Zones:</h3>
+    <ul id="zoneList"></ul>
   </div>
 
-  <div id="status">Waiting for GPS...</div>
-
   <script>
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
-    let firstPoint = null;
-    let currentLocation = null;
+    const radiusThresholdMeters = 3;
+    let currentPosition = null;
 
-    function latLonToCanvas(lat, lon) {
-      // Simple fake scale (not real world), for display only
-      const scale = 100000;
-      const baseLat = 13.1835;
-      const baseLon = 74.9335;
-
-      const x = (lon - baseLon) * scale + canvas.width / 2;
-      const y = (lat - baseLat) * -scale + canvas.height / 2;
-      return { x, y };
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371000; // Earth radius in meters
+      const toRad = angle => angle * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2)**2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon/2)**2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
     }
 
-    function drawRectangles(rects) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      rects.forEach(rect => {
-        const p1 = latLonToCanvas(rect.lat1, rect.lon1);
-        const p2 = latLonToCanvas(rect.lat2, rect.lon2);
-        ctx.beginPath();
-        ctx.strokeStyle = "#0077ff";
-        ctx.lineWidth = 2;
-        ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
-        ctx.stroke();
-      });
-
-      if (currentLocation) {
-        const point = latLonToCanvas(currentLocation.lat, currentLocation.lon);
-        ctx.beginPath();
-        ctx.fillStyle = "blue";
-        ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
-        ctx.fill();
-      }
-    }
-
-    function getRectangles() {
-      return JSON.parse(localStorage.getItem("rectangles") || "[]");
-    }
-
-    function saveRectangle(rect) {
-      const rects = getRectangles();
-      rects.push(rect);
-      localStorage.setItem("rectangles", JSON.stringify(rects));
-      drawRectangles(rects);
-    }
-
-    function setFirstPoint() {
-      getCurrentLocation(loc => {
-        firstPoint = loc;
-        alert("First point set.");
-      });
-    }
-
-    function setSecondPoint() {
-      if (!firstPoint) {
-        alert("Set the first point first.");
+    function updateLocation() {
+      if (!navigator.geolocation) {
+        alert("Geolocation not supported!");
         return;
       }
-      getCurrentLocation(loc => {
-        const rect = {
-          lat1: firstPoint.lat,
-          lon1: firstPoint.lon,
-          lat2: loc.lat,
-          lon2: loc.lon
-        };
-        saveRectangle(rect);
-        firstPoint = null;
-        alert("Rectangle saved.");
-      });
+
+      navigator.geolocation.watchPosition(
+        position => {
+          const { latitude, longitude } = position.coords;
+          currentPosition = { lat: latitude, lon: longitude };
+          document.getElementById("locationInfo").innerHTML =
+            `Lat: ${latitude.toFixed(6)}<br>Lon: ${longitude.toFixed(6)}`;
+          checkZones();
+        },
+        error => {
+          document.getElementById("status").innerText = "Unable to access GPS.";
+        },
+        { enableHighAccuracy: true, maximumAge: 1000 }
+      );
     }
 
-    function getCurrentLocation(callback) {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(pos => {
-          const lat = pos.coords.latitude;
-          const lon = pos.coords.longitude;
-          callback({ lat, lon });
-        });
+    function markZone() {
+      if (!currentPosition) {
+        alert("Waiting for GPS fix...");
+        return;
+      }
+      const zones = JSON.parse(localStorage.getItem("geoZones") || "[]");
+      zones.push({
+        lat: currentPosition.lat,
+        lon: currentPosition.lon,
+        time: new Date().toLocaleString()
+      });
+      localStorage.setItem("geoZones", JSON.stringify(zones));
+      displayZones();
+    }
+
+    function displayZones() {
+      const zones = JSON.parse(localStorage.getItem("geoZones") || "[]");
+      const list = document.getElementById("zoneList");
+      if (zones.length === 0) {
+        list.innerHTML = "<li>No zones saved.</li>";
+        return;
+      }
+
+      list.innerHTML = zones.map((z, i) =>
+        `<li>#${i+1}: ${z.lat.toFixed(6)}, ${z.lon.toFixed(6)} <br>🕒 ${z.time}</li>`
+      ).join("");
+    }
+
+    function clearZones() {
+      if (confirm("Clear all saved zones?")) {
+        localStorage.removeItem("geoZones");
+        displayZones();
+        document.getElementById("status").innerText = "Status: --";
       }
     }
 
-    function isWithinRectangle(lat, lon, rect, bufferMeters = 2) {
-      const buffer = bufferMeters * 0.000009; // ~1m in lat/lon degrees
-      const minLat = Math.min(rect.lat1, rect.lat2) - buffer;
-      const maxLat = Math.max(rect.lat1, rect.lat2) + buffer;
-      const minLon = Math.min(rect.lon1, rect.lon2) - buffer;
-      const maxLon = Math.max(rect.lon1, rect.lon2) + buffer;
-      return lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon;
-    }
+    function checkZones() {
+      const zones = JSON.parse(localStorage.getItem("geoZones") || "[]");
+      if (!currentPosition || zones.length === 0) {
+        document.getElementById("status").innerText = "Status: No zones.";
+        return;
+      }
 
-    function checkLocation() {
-      getCurrentLocation(loc => {
-        currentLocation = loc;
-        const rects = getRectangles();
-        const buffer = parseInt(document.getElementById("thresholdSelect").value);
-        const inside = rects.some(rect => isWithinRectangle(loc.lat, loc.lon, rect, buffer));
-        document.getElementById("status").innerText = inside ? "✅ Revisited" : "🆕 New Location";
-        drawRectangles(rects);
+      let revisited = zones.some(zone => {
+        const dist = haversine(currentPosition.lat, currentPosition.lon, zone.lat, zone.lon);
+        return dist <= radiusThresholdMeters;
       });
+
+      document.getElementById("status").innerHTML = revisited
+        ? `<span class="revisited">✅ Revisited</span>`
+        : `<span class="new">🆕 New Location</span>`;
     }
 
-    function clearAll() {
-      localStorage.removeItem("rectangles");
-      drawRectangles([]);
-      alert("All rectangles cleared.");
-    }
-
-    function updateBufferLabel() {
-      checkLocation();
-    }
-
-    // Load and track
-    drawRectangles(getRectangles());
-    setInterval(checkLocation, 1000);
+    updateLocation();
+    displayZones();
   </script>
 </body>
 </html>
