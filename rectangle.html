@@ -1,157 +1,178 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>GPS Rectangle Tracker</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Live Revisit Tracker</title>
   <style>
-    body { font-family: sans-serif; text-align: center; margin: 0; background: #f3f3f3; }
-    canvas { border: 1px solid #333; background: #fff; margin: 10px auto; display: block; }
-    button { margin: 10px; padding: 10px 20px; font-size: 16px; }
-    #log { margin-top: 10px; white-space: pre-wrap; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0; padding: 0;
+      background: #e8f7ff;
+      display: flex; flex-direction: column; align-items: center;
+    }
+    .container {
+      padding: 20px;
+      width: 100%; max-width: 600px;
+    }
+    canvas {
+      border: 1px solid #ccc;
+      width: 100%;
+      height: 300px;
+      background: #fff;
+    }
+    button {
+      margin: 5px; padding: 10px 15px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+    }
+    button.set { background-color: #007bff; color: white; }
+    button.clear { background-color: #dc3545; color: white; }
+    #status {
+      font-size: 18px;
+      margin-top: 10px;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
-  <h2>Location-Based Rectangle Tracker</h2>
-  <button onclick="setPoint1()">Set Point 1</button>
-  <button onclick="setPoint2()">Set Point 2</button>
-  <button onclick="checkLocation()">Check Location</button>
-  <button onclick="clearRectangles()">Clear Rectangles</button>
-  <canvas id="mapCanvas" width="400" height="400"></canvas>
-  <div id="status"></div>
-  <div id="log"></div>
+  <div class="container">
+    <h2>📍 Live Rectangle Revisit Tracker</h2>
+    <canvas id="mapCanvas" width="400" height="300"></canvas>
+    <div>
+      <button class="set" onclick="setPoint(1)">Set Point 1</button>
+      <button class="set" onclick="setPoint(2)">Set Point 2</button>
+      <button class="clear" onclick="clearData()">Clear</button>
+    </div>
+    <div id="status">Waiting for GPS...</div>
+  </div>
 
   <script>
-    let point1 = null;
-    let point2 = null;
-    let rectangles = JSON.parse(localStorage.getItem("rectangles") || "[]");
-    const canvas = document.getElementById("mapCanvas");
-    const ctx = canvas.getContext("2d");
+    let point1 = null, point2 = null, currentPos = null;
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
 
-    function setPoint1() {
-      navigator.geolocation.getCurrentPosition(pos => {
-        point1 = {
-          lat: pos.coords.latitude,
-          lon: pos.coords.longitude
-        };
-        alert("Point 1 set!");
-      });
+    function savePoints() {
+      localStorage.setItem('rectanglePoints', JSON.stringify({ point1, point2 }));
     }
 
-    function setPoint2() {
-      navigator.geolocation.getCurrentPosition(pos => {
-        point2 = {
-          lat: pos.coords.latitude,
-          lon: pos.coords.longitude
-        };
-        if (point1) {
-          const rect = normalizeRectangle(point1, point2);
-          rectangles.push(rect);
-          localStorage.setItem("rectangles", JSON.stringify(rectangles));
-          drawCanvas();
-          alert("Rectangle added!");
-        } else {
-          alert("Set Point 1 first!");
-        }
-      });
+    function loadPoints() {
+      const saved = localStorage.getItem('rectanglePoints');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        point1 = parsed.point1;
+        point2 = parsed.point2;
+      }
     }
 
-    function checkLocation() {
-      navigator.geolocation.getCurrentPosition(pos => {
-        const current = {
-          lat: pos.coords.latitude,
-          lon: pos.coords.longitude
-        };
-        drawCanvas(current);
-        let found = false;
-        for (const r of rectangles) {
-          if (
-            current.lat >= r.minLat &&
-            current.lat <= r.maxLat &&
-            current.lon >= r.minLon &&
-            current.lon <= r.maxLon
-          ) {
-            document.getElementById("status").innerText = "✅ Revisited!";
-            logVisit(current, "Revisited");
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          document.getElementById("status").innerText = "🆕 New Location";
-          logVisit(current, "New");
-        }
-      });
+    function clearData() {
+      localStorage.removeItem('rectanglePoints');
+      point1 = point2 = null;
+      updateStatus("🗑 Data cleared");
+      drawCanvas();
     }
 
-    function normalizeRectangle(p1, p2) {
-      return {
-        minLat: Math.min(p1.lat, p2.lat),
-        maxLat: Math.max(p1.lat, p2.lat),
-        minLon: Math.min(p1.lon, p2.lon),
-        maxLon: Math.max(p1.lon, p2.lon)
-      };
+    function setPoint(num) {
+      if (!currentPos) {
+        alert("Waiting for GPS...");
+        return;
+      }
+      const point = { lat: currentPos.lat, lon: currentPos.lon };
+      if (num === 1) point1 = point;
+      else point2 = point;
+
+      savePoints();
+      drawCanvas();
     }
 
-    function drawCanvas(current = null) {
+    function updateStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function drawCanvas() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const scale = 100000;
 
-      const padding = 20;
-      const allLats = rectangles.flatMap(r => [r.minLat, r.maxLat]);
-      const allLons = rectangles.flatMap(r => [r.minLon, r.maxLon]);
-      if (current) {
-        allLats.push(current.lat);
-        allLons.push(current.lon);
-      }
+      if (point1 && point2) {
+        const x1 = (point1.lon - baseLon()) * scale + 200;
+        const y1 = (point1.lat - baseLat()) * -scale + 150;
+        const x2 = (point2.lon - baseLon()) * scale + 200;
+        const y2 = (point2.lat - baseLat()) * -scale + 150;
 
-      const minLat = Math.min(...allLats);
-      const maxLat = Math.max(...allLats);
-      const minLon = Math.min(...allLons);
-      const maxLon = Math.max(...allLons);
-
-      function mapX(lon) {
-        return ((lon - minLon) / (maxLon - minLon)) * (canvas.width - 2 * padding) + padding;
-      }
-
-      function mapY(lat) {
-        return ((maxLat - lat) / (maxLat - minLat)) * (canvas.height - 2 * padding) + padding;
-      }
-
-      // Draw rectangles
-      ctx.strokeStyle = "#007bff";
-      ctx.lineWidth = 2;
-      rectangles.forEach(r => {
-        const x = mapX(r.minLon);
-        const y = mapY(r.maxLat);
-        const w = mapX(r.maxLon) - x;
-        const h = mapY(r.minLat) - y;
-        ctx.strokeRect(x, y, w, h);
-      });
-
-      // Draw current position
-      if (current) {
-        const cx = mapX(current.lon);
-        const cy = mapY(current.lat);
-        ctx.fillStyle = "red";
+        ctx.fillStyle = "rgba(0, 200, 0, 0.2)";
+        ctx.strokeStyle = "green";
         ctx.beginPath();
-        ctx.arc(cx, cy, 5, 0, 2 * Math.PI);
+        ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      if (currentPos) {
+        const x = (currentPos.lon - baseLon()) * scale + 200;
+        const y = (currentPos.lat - baseLat()) * -scale + 150;
+
+        ctx.fillStyle = "blue";
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
         ctx.fill();
       }
     }
 
-    function clearRectangles() {
-      rectangles = [];
-      localStorage.removeItem("rectangles");
-      drawCanvas();
-      document.getElementById("status").innerText = "Rectangles cleared.";
+    function baseLat() {
+      return (point1?.lat || currentPos?.lat || 0);
     }
 
-    function logVisit(loc, status) {
-      const timestamp = new Date().toLocaleTimeString();
-      const entry = `[${timestamp}] ${status} at (${loc.lat.toFixed(5)}, ${loc.lon.toFixed(5)})\n`;
-      const logDiv = document.getElementById("log");
-      logDiv.innerText = entry + logDiv.innerText;
+    function baseLon() {
+      return (point1?.lon || currentPos?.lon || 0);
     }
 
-    drawCanvas(); // Draw on load
+    function isInsideRect(pos) {
+      if (!point1 || !point2) return false;
+      const minLat = Math.min(point1.lat, point2.lat);
+      const maxLat = Math.max(point1.lat, point2.lat);
+      const minLon = Math.min(point1.lon, point2.lon);
+      const maxLon = Math.max(point1.lon, point2.lon);
+
+      return (
+        pos.lat >= minLat &&
+        pos.lat <= maxLat &&
+        pos.lon >= minLon &&
+        pos.lon <= maxLon
+      );
+    }
+
+    function trackLocation() {
+      if (!navigator.geolocation) {
+        updateStatus("Geolocation not supported.");
+        return;
+      }
+
+      navigator.geolocation.watchPosition(
+        (position) => {
+          currentPos = {
+            lat: parseFloat(position.coords.latitude.toFixed(6)),
+            lon: parseFloat(position.coords.longitude.toFixed(6))
+          };
+
+          const inside = isInsideRect(currentPos);
+          updateStatus(inside ? "✅ Revisited" : "🆕 New Location");
+
+          drawCanvas();
+        },
+        () => updateStatus("❌ Failed to get location"),
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 5000
+        }
+      );
+    }
+
+    loadPoints();
+    trackLocation();
   </script>
 </body>
 </html>
