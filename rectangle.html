@@ -43,7 +43,6 @@
     ul { text-align: left; padding-left: 20px; }
     .accuracy {
       font-size: 14px;
-      color: #666;
       margin-top: 5px;
     }
   </style>
@@ -52,7 +51,7 @@
   <div class="container">
     <h2>📍 Circular Geofence Tracker</h2>
     <p id="locationInfo">Waiting for location...</p>
-    <p id="accuracyInfo" class="accuracy"></p>
+    <p id="accuracyInfo" class="accuracy">Checking accuracy...</p>
     <div id="status" class="status">Status: --</div>
 
     <button onclick="markZone()">➕ Mark Current Location</button>
@@ -63,15 +62,15 @@
   </div>
 
   <script>
-    const radiusThresholdMeters = 3;
-    const movementThreshold = 1; // Minimum movement to consider (in meters)
-    const maxAllowedAccuracy = 15; // Discard if accuracy worse than 15 meters
+    const radiusThresholdMeters = 3;   // Geofence zone radius
+    const movementThreshold = 2;       // Ignore if movement < 2 meters
+    const maxAllowedAccuracy = 7;      // Require GPS accuracy < 7 meters
 
     let currentPosition = null;
     let lastKnownPosition = null;
 
     function haversine(lat1, lon1, lat2, lon2) {
-      const R = 6371000;
+      const R = 6371000; // Earth radius in meters
       const toRad = angle => angle * Math.PI / 180;
       const dLat = toRad(lat2 - lat1);
       const dLon = toRad(lon2 - lon1);
@@ -91,23 +90,34 @@
       navigator.geolocation.watchPosition(
         position => {
           const { latitude, longitude, accuracy } = position.coords;
+          const newPosition = { lat: latitude, lon: longitude };
 
-          // Skip noisy GPS
+          const accuracyElem = document.getElementById("accuracyInfo");
+
+          // Show color-coded accuracy feedback
+          accuracyElem.innerText = `📡 Accuracy: ±${accuracy.toFixed(1)} meters`;
+          if (accuracy <= 7) {
+            accuracyElem.style.color = "green";
+          } else if (accuracy <= 15) {
+            accuracyElem.style.color = "orange";
+          } else {
+            accuracyElem.style.color = "red";
+          }
+
+          // Skip poor accuracy
           if (accuracy > maxAllowedAccuracy) {
-            document.getElementById("accuracyInfo").innerText = `⚠️ Low GPS accuracy: ±${accuracy.toFixed(1)}m (ignoring)`;
+            console.log("Skipping update due to poor accuracy");
             return;
           }
 
-          const newPosition = { lat: latitude, lon: longitude };
-
-          // Skip minor movement
+          // Skip small movements
           if (lastKnownPosition) {
             const moved = haversine(
               lastKnownPosition.lat, lastKnownPosition.lon,
               newPosition.lat, newPosition.lon
             );
             if (moved < movementThreshold) {
-              document.getElementById("accuracyInfo").innerText = `📍 No significant movement (Δ${moved.toFixed(2)}m)`;
+              console.log("Ignoring minor movement:", moved.toFixed(2), "meters");
               return;
             }
           }
@@ -117,8 +127,6 @@
 
           document.getElementById("locationInfo").innerHTML =
             `Lat: ${latitude.toFixed(6)}<br>Lon: ${longitude.toFixed(6)}`;
-          document.getElementById("accuracyInfo").innerText =
-            `📡 Accuracy: ±${accuracy.toFixed(1)} meters`;
 
           checkZones();
         },
@@ -182,7 +190,7 @@
         : `<span class="new">🆕 New Location</span>`;
     }
 
-    // Init
+    // Start tracking
     updateLocation();
     displayZones();
   </script>
