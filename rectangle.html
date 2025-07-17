@@ -1,218 +1,180 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Geo Revisit Tracker</title>
+  <title>Rectangle Revisit Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
-      margin: 0;
-      font-family: sans-serif;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-    }
-    canvas {
-      flex: 1;
-      border: 2px solid #ccc;
-    }
-    .controls {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-around;
-      padding: 10px;
+      font-family: Arial, sans-serif;
+      margin: 10px;
       background: #f0f0f0;
     }
-    button {
-      padding: 10px 20px;
+
+    h2 {
+      text-align: center;
+    }
+
+    canvas {
+      border: 1px solid #000;
+      display: block;
+      margin: auto;
+      background: #fff;
+    }
+
+    #controls {
+      text-align: center;
+      margin-top: 10px;
+    }
+
+    button, select {
       margin: 5px;
+      padding: 8px 12px;
       font-size: 16px;
     }
+
     #status {
       font-size: 20px;
       text-align: center;
-      padding: 10px;
+      margin-top: 15px;
       font-weight: bold;
-    }
-    input[type="range"] {
-      width: 100px;
     }
   </style>
 </head>
 <body>
+  <h2>🔍 Rectangle Revisit Tracker</h2>
 
-<canvas id="mapCanvas"></canvas>
+  <canvas id="canvas" width="360" height="360"></canvas>
 
-<div class="controls">
-  <button onclick="setPoint1()">Set Point 1</button>
-  <button onclick="setPoint2()">Set Point 2</button>
-  <button onclick="clearRectangle()">Clear</button>
-  <label>Buffer (m):
-    <input type="range" min="1" max="3" value="2" id="bufferSlider" oninput="updateBufferLabel()">
-    <span id="bufferValue">2</span>
-  </label>
-</div>
+  <div id="controls">
+    <button onclick="setFirstPoint()">📍 Set First Point</button>
+    <button onclick="setSecondPoint()">📍 Set Second Point</button>
+    <select id="thresholdSelect" onchange="updateBufferLabel()">
+      <option value="1">1 meter</option>
+      <option value="2" selected>2 meters</option>
+      <option value="3">3 meters</option>
+    </select>
+    <button onclick="clearAll()">🗑️ Clear Rectangles</button>
+  </div>
 
-<div id="status">⏳ Waiting for location...</div>
+  <div id="status">Waiting for GPS...</div>
 
-<script>
-  const canvas = document.getElementById("mapCanvas");
-  const ctx = canvas.getContext("2d");
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight * 0.75;
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    let firstPoint = null;
+    let currentLocation = null;
 
-  let point1 = null;
-  let point2 = null;
-  let currentLocation = null;
-  let bufferDistance = 2;
+    function latLonToCanvas(lat, lon) {
+      // Simple fake scale (not real world), for display only
+      const scale = 100000;
+      const baseLat = 13.1835;
+      const baseLon = 74.9335;
 
-  function updateBufferLabel() {
-    bufferDistance = parseInt(document.getElementById("bufferSlider").value);
-    document.getElementById("bufferValue").textContent = bufferDistance;
-  }
-
-  function haversineDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371e3;
-    const toRad = x => x * Math.PI / 180;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a = Math.sin(dLat/2)**2 +
-              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-              Math.sin(dLon/2)**2;
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  }
-
-  function isWithinRectangleWithBuffer(current, rect, threshold = 2) {
-    const minLat = Math.min(rect.point1.lat, rect.point2.lat);
-    const maxLat = Math.max(rect.point1.lat, rect.point2.lat);
-    const minLng = Math.min(rect.point1.lng, rect.point2.lng);
-    const maxLng = Math.max(rect.point1.lng, rect.point2.lng);
-
-    const inside = (
-      current.lat >= minLat &&
-      current.lat <= maxLat &&
-      current.lng >= minLng &&
-      current.lng <= maxLng
-    );
-
-    if (inside) return true;
-
-    const corners = [
-      { lat: minLat, lng: minLng },
-      { lat: minLat, lng: maxLng },
-      { lat: maxLat, lng: minLng },
-      { lat: maxLat, lng: maxLng },
-    ];
-
-    for (const corner of corners) {
-      const d = haversineDistance(current.lat, current.lng, corner.lat, corner.lng);
-      if (d <= threshold) return true;
+      const x = (lon - baseLon) * scale + canvas.width / 2;
+      const y = (lat - baseLat) * -scale + canvas.height / 2;
+      return { x, y };
     }
 
-    return false;
-  }
+    function drawRectangles(rects) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      rects.forEach(rect => {
+        const p1 = latLonToCanvas(rect.lat1, rect.lon1);
+        const p2 = latLonToCanvas(rect.lat2, rect.lon2);
+        ctx.beginPath();
+        ctx.strokeStyle = "#0077ff";
+        ctx.lineWidth = 2;
+        ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
+        ctx.stroke();
+      });
 
-  function setPoint1() {
-    if (!currentLocation) return alert("Wait for location fix.");
-    point1 = { ...currentLocation };
-    saveRectangle();
-  }
-
-  function setPoint2() {
-    if (!currentLocation) return alert("Wait for location fix.");
-    point2 = { ...currentLocation };
-    saveRectangle();
-  }
-
-  function saveRectangle() {
-    if (point1 && point2) {
-      const rect = { point1, point2 };
-      localStorage.setItem("rectangle", JSON.stringify(rect));
-    }
-  }
-
-  function loadRectangle() {
-    const data = localStorage.getItem("rectangle");
-    if (data) {
-      const rect = JSON.parse(data);
-      point1 = rect.point1;
-      point2 = rect.point2;
-    }
-  }
-
-  function clearRectangle() {
-    localStorage.removeItem("rectangle");
-    point1 = null;
-    point2 = null;
-    updateCanvas();
-  }
-
-  function showStatus(msg) {
-    document.getElementById("status").textContent = msg;
-  }
-
-  function updateCanvas() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (point1 && point2) {
-      // Draw rectangle
-      ctx.strokeStyle = "green";
-      ctx.lineWidth = 2;
-      const [x1, y1] = toCanvasCoords(point1);
-      const [x2, y2] = toCanvasCoords(point2);
-      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      if (currentLocation) {
+        const point = latLonToCanvas(currentLocation.lat, currentLocation.lon);
+        ctx.beginPath();
+        ctx.fillStyle = "blue";
+        ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+      }
     }
 
-    if (currentLocation) {
-      const [x, y] = toCanvasCoords(currentLocation);
-      ctx.fillStyle = "blue";
-      ctx.beginPath();
-      ctx.arc(x, y, 8, 0, Math.PI * 2);
-      ctx.fill();
+    function getRectangles() {
+      return JSON.parse(localStorage.getItem("rectangles") || "[]");
     }
-  }
 
-  function toCanvasCoords(loc) {
-    // Map lat/lng to canvas for display (relative view)
-    const centerLat = currentLocation ? currentLocation.lat : 0;
-    const centerLng = currentLocation ? currentLocation.lng : 0;
-    const scale = 100000; // Increase or decrease to scale display
-    const x = canvas.width / 2 + (loc.lng - centerLng) * scale;
-    const y = canvas.height / 2 - (loc.lat - centerLat) * scale;
-    return [x, y];
-  }
-
-  function checkLocation() {
-    if (point1 && point2 && currentLocation) {
-      const inside = isWithinRectangleWithBuffer(currentLocation, { point1, point2 }, bufferDistance);
-      showStatus(inside ? "✅ Revisited" : "🆕 New Location");
-    } else {
-      showStatus("⚠️ Set both points");
+    function saveRectangle(rect) {
+      const rects = getRectangles();
+      rects.push(rect);
+      localStorage.setItem("rectangles", JSON.stringify(rects));
+      drawRectangles(rects);
     }
-  }
 
-  // Live location tracking
-  navigator.geolocation.watchPosition(pos => {
-    currentLocation = {
-      lat: pos.coords.latitude,
-      lng: pos.coords.longitude
-    };
-    checkLocation();
-    updateCanvas();
-  }, err => {
-    console.error(err);
-    showStatus("❌ Location error");
-  }, {
-    enableHighAccuracy: true,
-    maximumAge: 0,
-    timeout: 10000
-  });
+    function setFirstPoint() {
+      getCurrentLocation(loc => {
+        firstPoint = loc;
+        alert("First point set.");
+      });
+    }
 
-  // On load
-  loadRectangle();
-  updateBufferLabel();
-</script>
+    function setSecondPoint() {
+      if (!firstPoint) {
+        alert("Set the first point first.");
+        return;
+      }
+      getCurrentLocation(loc => {
+        const rect = {
+          lat1: firstPoint.lat,
+          lon1: firstPoint.lon,
+          lat2: loc.lat,
+          lon2: loc.lon
+        };
+        saveRectangle(rect);
+        firstPoint = null;
+        alert("Rectangle saved.");
+      });
+    }
 
+    function getCurrentLocation(callback) {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          callback({ lat, lon });
+        });
+      }
+    }
+
+    function isWithinRectangle(lat, lon, rect, bufferMeters = 2) {
+      const buffer = bufferMeters * 0.000009; // ~1m in lat/lon degrees
+      const minLat = Math.min(rect.lat1, rect.lat2) - buffer;
+      const maxLat = Math.max(rect.lat1, rect.lat2) + buffer;
+      const minLon = Math.min(rect.lon1, rect.lon2) - buffer;
+      const maxLon = Math.max(rect.lon1, rect.lon2) + buffer;
+      return lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon;
+    }
+
+    function checkLocation() {
+      getCurrentLocation(loc => {
+        currentLocation = loc;
+        const rects = getRectangles();
+        const buffer = parseInt(document.getElementById("thresholdSelect").value);
+        const inside = rects.some(rect => isWithinRectangle(loc.lat, loc.lon, rect, buffer));
+        document.getElementById("status").innerText = inside ? "✅ Revisited" : "🆕 New Location";
+        drawRectangles(rects);
+      });
+    }
+
+    function clearAll() {
+      localStorage.removeItem("rectangles");
+      drawRectangles([]);
+      alert("All rectangles cleared.");
+    }
+
+    function updateBufferLabel() {
+      checkLocation();
+    }
+
+    // Load and track
+    drawRectangles(getRectangles());
+    setInterval(checkLocation, 1000);
+  </script>
 </body>
 </html>
