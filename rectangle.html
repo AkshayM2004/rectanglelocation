@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Geolocation Rectangle Revisit Tracker</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin: 20px; }
+    canvas { border: 1px solid #000; margin-top: 10px; }
+    #visitLogs { margin-top: 20px; text-align: left; max-height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
+    .visited { color: green; }
+    .new { color: blue; }
+  </style>
+</head>
+<body>
+  <h2>📍 Rectangle Revisit Tracker</h2>
+
+  <button onclick="startPoint()">Set Point 1</button>
+  <button onclick="endPoint()">Set Point 2</button>
+  <button onclick="clearStorage()">Clear All</button>
+
+  <br><br>
+  Distance Threshold:
+  <input type="range" id="thresholdSlider" min="1" max="50" value="2" oninput="updateThresholdLabel()">
+  <span id="thresholdLabel">2m</span>
+
+  <br><br>
+  <button onclick="checkLocation()">🔍 Check Location</button>
+  <p id="status">Status: N/A</p>
+
+  <canvas id="mapCanvas" width="400" height="400"></canvas>
+
+  <h3>Visit Logs</h3>
+  <div id="visitLogs"></div>
+
+  <script>
+    let point1 = null;
+    let point2 = null;
+    let threshold = 2; // meters
+    const canvas = document.getElementById("mapCanvas");
+    const ctx = canvas.getContext("2d");
+
+    function updateThresholdLabel() {
+      threshold = parseInt(document.getElementById("thresholdSlider").value);
+      document.getElementById("thresholdLabel").innerText = `${threshold}m`;
+    }
+
+    function startPoint() {
+      navigator.geolocation.getCurrentPosition(pos => {
+        point1 = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        alert("📍 Point 1 set");
+      });
+    }
+
+    function endPoint() {
+      if (!point1) return alert("Please set Point 1 first.");
+      navigator.geolocation.getCurrentPosition(pos => {
+        point2 = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        const name = prompt("Enter zone name:");
+        if (!name) return;
+
+        const rectangles = JSON.parse(localStorage.getItem("rectangles") || "[]");
+        rectangles.push({ point1, point2, name });
+        localStorage.setItem("rectangles", JSON.stringify(rectangles));
+
+        point1 = null;
+        point2 = null;
+        alert("📦 Rectangle saved");
+        drawCanvas();
+      });
+    }
+
+    function clearStorage() {
+      localStorage.removeItem("rectangles");
+      document.getElementById("visitLogs").innerHTML = "";
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      alert("🧹 All data cleared");
+    }
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371000; // m
+      const toRad = x => x * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function checkLocation() {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        const rectangles = JSON.parse(localStorage.getItem("rectangles") || "[]");
+
+        let found = false;
+        let zoneName = "";
+        for (const rect of rectangles) {
+          const minLat = Math.min(rect.point1.lat, rect.point2.lat);
+          const maxLat = Math.max(rect.point1.lat, rect.point2.lat);
+          const minLon = Math.min(rect.point1.lon, rect.point2.lon);
+          const maxLon = Math.max(rect.point1.lon, rect.point2.lon);
+
+          const centerLat = (rect.point1.lat + rect.point2.lat) / 2;
+          const centerLon = (rect.point1.lon + rect.point2.lon) / 2;
+          const dist = haversine(lat, lon, centerLat, centerLon);
+
+          if (lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon && dist <= threshold) {
+            found = true;
+            zoneName = rect.name;
+            break;
+          }
+        }
+
+        const status = document.getElementById("status");
+        const now = new Date().toLocaleString();
+        const logEl = document.createElement("div");
+
+        if (found) {
+          status.innerText = `✅ Revisited zone: ${zoneName}`;
+          logEl.className = "visited";
+          logEl.innerText = `✅ Revisited [${zoneName}] at ${now}`;
+        } else {
+          status.innerText = "📍 New Location";
+          logEl.className = "new";
+          logEl.innerText = `📍 New location (${lat.toFixed(5)}, ${lon.toFixed(5)}) at ${now}`;
+        }
+
+        document.getElementById("visitLogs").prepend(logEl);
+        drawCanvas(lat, lon);
+      }, () => alert("Failed to get location."));
+    }
+
+    function drawCanvas(currentLat = null, currentLon = null) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const rectangles = JSON.parse(localStorage.getItem("rectangles") || "[]");
+
+      const allLats = [];
+      const allLons = [];
+
+      rectangles.forEach(rect => {
+        allLats.push(rect.point1.lat, rect.point2.lat);
+        allLons.push(rect.point1.lon, rect.point2.lon);
+      });
+
+      if (currentLat && currentLon) {
+        allLats.push(currentLat);
+        allLons.push(currentLon);
+      }
+
+      if (allLats.length === 0 || allLons.length === 0) return;
+
+      const minLat = Math.min(...allLats);
+      const maxLat = Math.max(...allLats);
+      const minLon = Math.min(...allLons);
+      const maxLon = Math.max(...allLons);
+
+      const latRange = maxLat - minLat;
+      const lonRange = maxLon - minLon;
+
+      function toCanvas(lat, lon) {
+        const x = ((lon - minLon) / lonRange) * canvas.width;
+        const y = canvas.height - ((lat - minLat) / latRange) * canvas.height;
+        return { x, y };
+      }
+
+      rectangles.forEach(rect => {
+        const a = toCanvas(rect.point1.lat, rect.point1.lon);
+        const b = toCanvas(rect.point2.lat, rect.point2.lon);
+        const width = b.x - a.x;
+        const height = b.y - a.y;
+        ctx.strokeStyle = "red";
+        ctx.strokeRect(a.x, a.y, width, height);
+        ctx.fillText(rect.name, a.x, a.y - 5);
+      });
+
+      if (currentLat && currentLon) {
+        const p = toCanvas(currentLat, currentLon);
+        ctx.fillStyle = "blue";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+
+    drawCanvas(); // initial draw on load
+  </script>
+</body>
+</html>
