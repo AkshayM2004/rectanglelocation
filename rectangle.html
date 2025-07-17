@@ -1,206 +1,129 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <title>Geofence Tracker with Motion Sensor</title>
+  <title>Table Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      background: #f0f9ff;
-      padding: 20px;
-      text-align: center;
-    }
-    .container {
-      max-width: 500px;
-      margin: auto;
-      background: white;
-      padding: 20px;
-      border-radius: 10px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    }
-    h2 { margin-top: 0; }
-    button {
-      padding: 10px 15px;
-      margin: 10px 5px;
-      border: none;
-      border-radius: 6px;
-      background: #0077cc;
-      color: white;
-      cursor: pointer;
-    }
-    button.clear { background-color: #cc0000; }
-    .status { font-size: 20px; font-weight: bold; margin-top: 10px; }
-    .revisited { color: green; }
-    .new { color: red; }
-    ul { text-align: left; padding-left: 20px; }
-    .accuracy { font-size: 14px; margin-top: 5px; }
-    .motion-status { font-size: 14px; color: #444; margin-top: 5px; }
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f1f7fa; }
+    h1 { margin-bottom: 10px; }
+    button { padding: 10px 20px; margin: 5px; font-size: 16px; border-radius: 10px; border: none; background-color: #3498db; color: white; cursor: pointer; }
+    button:hover { background-color: #2980b9; }
+    .status-box { margin-top: 20px; font-size: 18px; }
+    .revisited { color: green; font-weight: bold; }
+    .new { color: red; font-weight: bold; }
+    #zoneList { list-style: none; padding: 0; margin-top: 20px; }
+    li { margin-bottom: 10px; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h2>📍 Motion-Based Geofence Tracker</h2>
-    <p id="locationInfo">Waiting for location...</p>
-    <p id="accuracyInfo" class="accuracy">GPS accuracy: --</p>
-    <p id="motionStatus" class="motion-status">Motion: --</p>
-    <div id="status" class="status">Status: --</div>
-
-    <button onclick="markZone()">➕ Mark Current Location</button>
-    <button class="clear" onclick="clearZones()">🗑 Clear Zones</button>
-
-    <h3>📌 Saved Zones:</h3>
-    <ul id="zoneList"></ul>
-  </div>
+  <h1>📍 Table Tracker (Geofence)</h1>
+  <p>Mark table locations using GPS. The app will detect which table you're at.</p>
+  
+  <button onclick="markTable(1)">📌 Mark Table 1</button>
+  <button onclick="markTable(2)">📌 Mark Table 2</button>
+  
+  <div class="status-box" id="status">Status: Waiting for GPS...</div>
+  <ul id="zoneList"></ul>
 
   <script>
-    const radiusThresholdMeters = 3;
-    const movementThreshold = 2;
-    const maxAllowedAccuracy = 7;
-
     let currentPosition = null;
-    let lastKnownPosition = null;
-    let allowGPSUpdate = false;
+
+    function toRadians(degrees) {
+      return degrees * Math.PI / 180;
+    }
 
     function haversine(lat1, lon1, lat2, lon2) {
-      const R = 6371000;
-      const toRad = deg => deg * Math.PI / 180;
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a = Math.sin(dLat/2)**2 +
-                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-                Math.sin(dLon/2)**2;
+      const R = 6371e3; // metres
+      const φ1 = toRadians(lat1);
+      const φ2 = toRadians(lat2);
+      const Δφ = toRadians(lat2 - lat1);
+      const Δλ = toRadians(lon2 - lon1);
+
+      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ/2) * Math.sin(Δλ/2);
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
+
+      const d = R * c; // in metres
+      return d;
     }
 
-    function updateLocation() {
-      if (!navigator.geolocation) {
-        alert("Geolocation not supported!");
-        return;
-      }
-
-      navigator.geolocation.watchPosition(
-        position => {
-          const { latitude, longitude, accuracy } = position.coords;
-          const newPosition = { lat: latitude, lon: longitude };
-          const accuracyElem = document.getElementById("accuracyInfo");
-
-          // Update accuracy UI
-          accuracyElem.innerText = `📡 Accuracy: ±${accuracy.toFixed(1)} meters`;
-          accuracyElem.style.color = accuracy <= 7 ? "green" : (accuracy <= 15 ? "orange" : "red");
-
-          // Skip inaccurate or unnecessary updates
-          if (accuracy > maxAllowedAccuracy || !allowGPSUpdate) return;
-
-          if (lastKnownPosition) {
-            const moved = haversine(
-              lastKnownPosition.lat, lastKnownPosition.lon,
-              newPosition.lat, newPosition.lon
-            );
-            if (moved < movementThreshold) return;
-          }
-
-          currentPosition = newPosition;
-          lastKnownPosition = newPosition;
-
-          document.getElementById("locationInfo").innerHTML =
-            `Lat: ${latitude.toFixed(6)}<br>Lon: ${longitude.toFixed(6)}`;
-
-          checkZones();
-        },
-        error => {
-          document.getElementById("status").innerText = "Unable to access GPS.";
-        },
-        { enableHighAccuracy: true, maximumAge: 1000 }
-      );
-    }
-
-    function markZone() {
+    function markTable(tableNumber) {
       if (!currentPosition) {
         alert("Waiting for GPS fix...");
         return;
       }
-      const zones = JSON.parse(localStorage.getItem("geoZones") || "[]");
-      zones.push({
+      const key = `table_${tableNumber}`;
+      const tableData = {
         lat: currentPosition.lat,
         lon: currentPosition.lon,
         time: new Date().toLocaleString()
-      });
-      localStorage.setItem("geoZones", JSON.stringify(zones));
-      displayZones();
+      };
+      localStorage.setItem(key, JSON.stringify(tableData));
+      alert(`✅ Table ${tableNumber} location saved.`);
+      displayTables();
     }
 
-    function displayZones() {
-      const zones = JSON.parse(localStorage.getItem("geoZones") || "[]");
+    function displayTables() {
       const list = document.getElementById("zoneList");
-      if (zones.length === 0) {
-        list.innerHTML = "<li>No zones saved.</li>";
-        return;
-      }
-
-      list.innerHTML = zones.map((z, i) =>
-        `<li>#${i+1}: ${z.lat.toFixed(6)}, ${z.lon.toFixed(6)} <br>🕒 ${z.time}</li>`
-      ).join("");
-    }
-
-    function clearZones() {
-      if (confirm("Clear all saved zones?")) {
-        localStorage.removeItem("geoZones");
-        displayZones();
-        document.getElementById("status").innerText = "Status: --";
-      }
-    }
-
-    function checkZones() {
-      const zones = JSON.parse(localStorage.getItem("geoZones") || "[]");
-      if (!currentPosition || zones.length === 0) {
-        document.getElementById("status").innerText = "Status: No zones.";
-        return;
-      }
-
-      let revisited = zones.some(zone => {
-        const dist = haversine(currentPosition.lat, currentPosition.lon, zone.lat, zone.lon);
-        return dist <= radiusThresholdMeters;
-      });
-
-      document.getElementById("status").innerHTML = revisited
-        ? `<span class="revisited">✅ Revisited</span>`
-        : `<span class="new">🆕 New Location</span>`;
-    }
-
-    // 🚀 Motion detection using DeviceMotionEvent
-    function initMotionDetection() {
-      const motionText = document.getElementById("motionStatus");
-      if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        // iOS
-        DeviceMotionEvent.requestPermission().then(response => {
-          if (response === 'granted') {
-            window.addEventListener('devicemotion', handleMotion);
-          }
-        }).catch(console.error);
-      } else {
-        // Android
-        window.addEventListener('devicemotion', handleMotion);
-      }
-
-      function handleMotion(event) {
-        const acc = event.accelerationIncludingGravity;
-        if (!acc) return;
-        const magnitude = Math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2);
-        if (magnitude > 1.5) {
-          motionText.innerText = "Motion: 🚶 Device is moving";
-          allowGPSUpdate = true;
-        } else {
-          motionText.innerText = "Motion: 🛑 Device is still";
-          allowGPSUpdate = false;
+      list.innerHTML = "";
+      for (let i = 1; i <= 10; i++) {
+        const zone = localStorage.getItem(`table_${i}`);
+        if (zone) {
+          const z = JSON.parse(zone);
+          list.innerHTML += `<li>📍 Table ${i}: ${z.lat.toFixed(6)}, ${z.lon.toFixed(6)}<br>🕒 ${z.time}</li>`;
         }
       }
     }
 
-    // Init
-    updateLocation();
-    displayZones();
-    initMotionDetection();
+    function checkZones() {
+      if (!currentPosition) {
+        document.getElementById("status").innerText = "Status: No GPS.";
+        return;
+      }
+
+      for (let i = 1; i <= 10; i++) {
+        const zone = localStorage.getItem(`table_${i}`);
+        if (zone) {
+          const z = JSON.parse(zone);
+          const dist = haversine(currentPosition.lat, currentPosition.lon, z.lat, z.lon);
+          if (dist <= 0.5) {
+            document.getElementById("status").innerHTML = `<span class="revisited">✅ You are at Table ${i}</span>`;
+            return;
+          }
+        }
+      }
+      document.getElementById("status").innerHTML = `<span class="new">🆕 Not near any table</span>`;
+    }
+
+    function startTracking() {
+      if (!navigator.geolocation) {
+        alert("Geolocation is not supported by your browser.");
+        return;
+      }
+
+      navigator.geolocation.watchPosition(
+        (position) => {
+          currentPosition = {
+            lat: position.coords.latitude,
+            lon: position.coords.longitude
+          };
+          checkZones();
+        },
+        (error) => {
+          document.getElementById("status").innerText = "Error getting location.";
+          console.error(error);
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 1000,
+          timeout: 10000
+        }
+      );
+    }
+
+    startTracking();
+    displayTables();
   </script>
 </body>
 </html>
