@@ -1,170 +1,148 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Table GPS Tracker</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Table Revisit Tracker</title>
   <style>
     body {
-      margin: 0;
-      font-family: sans-serif;
-      text-align: center;
-      background: #f0f4f8;
+      font-family: Arial, sans-serif;
+      background: #f0f5ff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
     }
 
-    h1 {
-      margin: 20px 0 10px;
-    }
-
-    #canvas {
-      width: 100%;
-      max-width: 500px;
-      height: 500px;
-      background: #fff;
+    canvas {
       border: 2px solid #ccc;
-    }
-
-    #buttons {
-      margin-top: 20px;
+      background: #fff;
+      margin-bottom: 20px;
     }
 
     button {
       padding: 10px 20px;
-      margin: 10px;
       font-size: 16px;
+      border-radius: 8px;
       border: none;
       background: #007bff;
       color: white;
-      border-radius: 8px;
       cursor: pointer;
+      margin-bottom: 10px;
     }
 
-    button:hover {
-      background: #0056b3;
-    }
-
-    #status {
-      margin-top: 20px;
-      font-size: 20px;
+    #statusText {
+      font-size: 18px;
+      margin: 10px;
       font-weight: bold;
     }
   </style>
 </head>
 <body>
-  <h1>Table GPS Tracker</h1>
-  <canvas id="canvas" width="500" height="500"></canvas>
-
-  <div id="buttons">
-    <button onclick="setTableLocation()">📍 Set Table Here</button>
-    <button onclick="checkLocation()">📡 Check Location</button>
-  </div>
-
-  <div id="status">Waiting for action...</div>
+  <h2>📍 Table Revisit Tracker</h2>
+  <canvas id="mapCanvas" width="300" height="300"></canvas>
+  <div id="statusText">⏳ Waiting for GPS...</div>
+  <button id="setTableBtn">➕ Set Current Location as Table</button>
 
   <script>
-    let tableLocation = null;
-    let pulseRadius = 10;
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+    const canvas = document.getElementById("mapCanvas");
+    const ctx = canvas.getContext("2d");
+    const statusText = document.getElementById("statusText");
+    let tableLocations = JSON.parse(localStorage.getItem("tables")) || [];
+    let currentLocation = null;
 
-    // --- GPS Distance Formula ---
-    function haversineDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371e3;
-      const toRad = x => x * Math.PI / 180;
+    const radius = 1.5; // meters
+    const smoothHistory = [];
+    const maxHistoryLength = 5;
+
+    function toRad(deg) {
+      return (deg * Math.PI) / 180;
+    }
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371000; // meters
       const dLat = toRad(lat2 - lat1);
       const dLon = toRad(lon2 - lon1);
-      const a = Math.sin(dLat / 2) ** 2 +
-                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-                Math.sin(dLon / 2) ** 2;
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       return R * c;
     }
 
-    function isInsideCircle(current, center, radiusMeters) {
-      return haversineDistance(current.lat, current.lng, center.lat, center.lng) <= radiusMeters;
+    function getSmoothedPosition(newPos) {
+      if (!newPos) return null;
+      smoothHistory.push(newPos);
+      if (smoothHistory.length > maxHistoryLength) smoothHistory.shift();
+
+      const avgLat = smoothHistory.reduce((sum, p) => sum + p.lat, 0) / smoothHistory.length;
+      const avgLng = smoothHistory.reduce((sum, p) => sum + p.lng, 0) / smoothHistory.length;
+
+      return { lat: avgLat, lng: avgLng };
     }
 
-    function drawCanvasCircle(x, y, r, color, alpha = 1.0) {
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, 2 * Math.PI);
-      ctx.strokeStyle = `rgba(${color}, ${alpha})`;
-      ctx.lineWidth = 2;
-      ctx.stroke();
+    function isRevisit(pos) {
+      return tableLocations.some((table) => {
+        const dist = haversine(pos.lat, pos.lng, table.lat, table.lng);
+        return dist <= radius;
+      });
     }
 
-    function animatePulse(x, y) {
+    function updateCanvas() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
 
-      // Static table circle
-      drawCanvasCircle(x, y, 10, "0, 128, 0");
-
-      // Pulsing animation
-      drawCanvasCircle(x, y, pulseRadius, "0, 200, 0", 0.4);
-
-      pulseRadius += 0.7;
-      if (pulseRadius > 40) pulseRadius = 10;
-
-      requestAnimationFrame(() => animatePulse(x, y));
-    }
-
-    function setTableLocation() {
-      if (!navigator.geolocation) {
-        alert("Geolocation not supported");
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(pos => {
-        tableLocation = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude
-        };
-
-        localStorage.setItem('tableLocation', JSON.stringify(tableLocation));
-        document.getElementById("status").innerText = "✅ Table Location Saved!";
-
-        // Animate on canvas
-        const x = canvas.width / 2;
-        const y = canvas.height / 2;
-        animatePulse(x, y);
-      }, err => {
-        alert("Location error: " + err.message);
+      // Draw saved table zones
+      tableLocations.forEach((table) => {
+        const dx = (table.lng - currentLocation.lng) * 100000;
+        const dy = (table.lat - currentLocation.lat) * -100000;
+        ctx.beginPath();
+        ctx.strokeStyle = "green";
+        ctx.arc(centerX + dx, centerY + dy, radius * 10, 0, Math.PI * 2);
+        ctx.stroke();
       });
+
+      // Draw user location
+      ctx.beginPath();
+      ctx.fillStyle = "blue";
+      ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    function checkLocation() {
-      if (!navigator.geolocation) {
-        alert("Geolocation not supported");
-        return;
+    function checkPosition() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((position) => {
+          const newPos = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+          currentLocation = getSmoothedPosition(newPos);
+          if (!currentLocation) return;
+
+          const revisit = isRevisit(currentLocation);
+          statusText.innerHTML = revisit
+            ? `<span style="color: green;">✅ Revisit</span>`
+            : `<span style="color: blue;">🆕 New Location</span>`;
+
+          updateCanvas();
+        });
+      } else {
+        statusText.innerText = "❌ Geolocation not supported.";
       }
-
-      navigator.geolocation.getCurrentPosition(pos => {
-        const current = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude
-        };
-
-        const stored = JSON.parse(localStorage.getItem('tableLocation'));
-        if (!stored) {
-          document.getElementById("status").innerText = "⚠️ Table not set yet.";
-          return;
-        }
-
-        const radius = 1.0; // meters
-        const inside = isInsideCircle(current, stored, radius);
-        document.getElementById("status").innerText = inside ? "✅ Revisit (inside circle)" : "🆕 New Location";
-      }, err => {
-        alert("Location error: " + err.message);
-      });
     }
 
-    // Load previous table on startup
-    window.onload = () => {
-      const stored = localStorage.getItem('tableLocation');
-      if (stored) {
-        const x = canvas.width / 2;
-        const y = canvas.height / 2;
-        animatePulse(x, y);
+    document.getElementById("setTableBtn").addEventListener("click", () => {
+      if (currentLocation) {
+        tableLocations.push(currentLocation);
+        localStorage.setItem("tables", JSON.stringify(tableLocations));
+        alert("📌 Table location saved!");
+        updateCanvas();
       }
-    };
+    });
+
+    // Auto-check every second
+    setInterval(checkPosition, 1000);
   </script>
 </body>
 </html>
