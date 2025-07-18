@@ -1,129 +1,170 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Table Tracker</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8">
+  <title>Table GPS Tracker</title>
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f1f7fa; }
-    h1 { margin-bottom: 10px; }
-    button { padding: 10px 20px; margin: 5px; font-size: 16px; border-radius: 10px; border: none; background-color: #3498db; color: white; cursor: pointer; }
-    button:hover { background-color: #2980b9; }
-    .status-box { margin-top: 20px; font-size: 18px; }
-    .revisited { color: green; font-weight: bold; }
-    .new { color: red; font-weight: bold; }
-    #zoneList { list-style: none; padding: 0; margin-top: 20px; }
-    li { margin-bottom: 10px; }
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      text-align: center;
+      background: #f0f4f8;
+    }
+
+    h1 {
+      margin: 20px 0 10px;
+    }
+
+    #canvas {
+      width: 100%;
+      max-width: 500px;
+      height: 500px;
+      background: #fff;
+      border: 2px solid #ccc;
+    }
+
+    #buttons {
+      margin-top: 20px;
+    }
+
+    button {
+      padding: 10px 20px;
+      margin: 10px;
+      font-size: 16px;
+      border: none;
+      background: #007bff;
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    #status {
+      margin-top: 20px;
+      font-size: 20px;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
-  <h1>📍 Table Tracker (Geofence)</h1>
-  <p>Mark table locations using GPS. The app will detect which table you're at.</p>
-  
-  <button onclick="markTable(1)">📌 Mark Table 1</button>
-  <button onclick="markTable(2)">📌 Mark Table 2</button>
-  
-  <div class="status-box" id="status">Status: Waiting for GPS...</div>
-  <ul id="zoneList"></ul>
+  <h1>Table GPS Tracker</h1>
+  <canvas id="canvas" width="500" height="500"></canvas>
+
+  <div id="buttons">
+    <button onclick="setTableLocation()">📍 Set Table Here</button>
+    <button onclick="checkLocation()">📡 Check Location</button>
+  </div>
+
+  <div id="status">Waiting for action...</div>
 
   <script>
-    let currentPosition = null;
+    let tableLocation = null;
+    let pulseRadius = 10;
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
 
-    function toRadians(degrees) {
-      return degrees * Math.PI / 180;
-    }
-
-    function haversine(lat1, lon1, lat2, lon2) {
-      const R = 6371e3; // metres
-      const φ1 = toRadians(lat1);
-      const φ2 = toRadians(lat2);
-      const Δφ = toRadians(lat2 - lat1);
-      const Δλ = toRadians(lon2 - lon1);
-
-      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                Math.cos(φ1) * Math.cos(φ2) *
-                Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    // --- GPS Distance Formula ---
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371e3;
+      const toRad = x => x * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon / 2) ** 2;
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-      const d = R * c; // in metres
-      return d;
+      return R * c;
     }
 
-    function markTable(tableNumber) {
-      if (!currentPosition) {
-        alert("Waiting for GPS fix...");
-        return;
-      }
-      const key = `table_${tableNumber}`;
-      const tableData = {
-        lat: currentPosition.lat,
-        lon: currentPosition.lon,
-        time: new Date().toLocaleString()
-      };
-      localStorage.setItem(key, JSON.stringify(tableData));
-      alert(`✅ Table ${tableNumber} location saved.`);
-      displayTables();
+    function isInsideCircle(current, center, radiusMeters) {
+      return haversineDistance(current.lat, current.lng, center.lat, center.lng) <= radiusMeters;
     }
 
-    function displayTables() {
-      const list = document.getElementById("zoneList");
-      list.innerHTML = "";
-      for (let i = 1; i <= 10; i++) {
-        const zone = localStorage.getItem(`table_${i}`);
-        if (zone) {
-          const z = JSON.parse(zone);
-          list.innerHTML += `<li>📍 Table ${i}: ${z.lat.toFixed(6)}, ${z.lon.toFixed(6)}<br>🕒 ${z.time}</li>`;
-        }
-      }
+    function drawCanvasCircle(x, y, r, color, alpha = 1.0) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, 2 * Math.PI);
+      ctx.strokeStyle = `rgba(${color}, ${alpha})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
     }
 
-    function checkZones() {
-      if (!currentPosition) {
-        document.getElementById("status").innerText = "Status: No GPS.";
-        return;
-      }
+    function animatePulse(x, y) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      for (let i = 1; i <= 10; i++) {
-        const zone = localStorage.getItem(`table_${i}`);
-        if (zone) {
-          const z = JSON.parse(zone);
-          const dist = haversine(currentPosition.lat, currentPosition.lon, z.lat, z.lon);
-          if (dist <= 0.5) {
-            document.getElementById("status").innerHTML = `<span class="revisited">✅ You are at Table ${i}</span>`;
-            return;
-          }
-        }
-      }
-      document.getElementById("status").innerHTML = `<span class="new">🆕 Not near any table</span>`;
+      // Static table circle
+      drawCanvasCircle(x, y, 10, "0, 128, 0");
+
+      // Pulsing animation
+      drawCanvasCircle(x, y, pulseRadius, "0, 200, 0", 0.4);
+
+      pulseRadius += 0.7;
+      if (pulseRadius > 40) pulseRadius = 10;
+
+      requestAnimationFrame(() => animatePulse(x, y));
     }
 
-    function startTracking() {
+    function setTableLocation() {
       if (!navigator.geolocation) {
-        alert("Geolocation is not supported by your browser.");
+        alert("Geolocation not supported");
         return;
       }
 
-      navigator.geolocation.watchPosition(
-        (position) => {
-          currentPosition = {
-            lat: position.coords.latitude,
-            lon: position.coords.longitude
-          };
-          checkZones();
-        },
-        (error) => {
-          document.getElementById("status").innerText = "Error getting location.";
-          console.error(error);
-        },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 1000,
-          timeout: 10000
-        }
-      );
+      navigator.geolocation.getCurrentPosition(pos => {
+        tableLocation = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        };
+
+        localStorage.setItem('tableLocation', JSON.stringify(tableLocation));
+        document.getElementById("status").innerText = "✅ Table Location Saved!";
+
+        // Animate on canvas
+        const x = canvas.width / 2;
+        const y = canvas.height / 2;
+        animatePulse(x, y);
+      }, err => {
+        alert("Location error: " + err.message);
+      });
     }
 
-    startTracking();
-    displayTables();
+    function checkLocation() {
+      if (!navigator.geolocation) {
+        alert("Geolocation not supported");
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(pos => {
+        const current = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        };
+
+        const stored = JSON.parse(localStorage.getItem('tableLocation'));
+        if (!stored) {
+          document.getElementById("status").innerText = "⚠️ Table not set yet.";
+          return;
+        }
+
+        const radius = 1.0; // meters
+        const inside = isInsideCircle(current, stored, radius);
+        document.getElementById("status").innerText = inside ? "✅ Revisit (inside circle)" : "🆕 New Location";
+      }, err => {
+        alert("Location error: " + err.message);
+      });
+    }
+
+    // Load previous table on startup
+    window.onload = () => {
+      const stored = localStorage.getItem('tableLocation');
+      if (stored) {
+        const x = canvas.width / 2;
+        const y = canvas.height / 2;
+        animatePulse(x, y);
+      }
+    };
   </script>
 </body>
 </html>
