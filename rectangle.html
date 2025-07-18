@@ -2,147 +2,164 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Table Revisit Tracker</title>
+  <title>Table Tracker with Persistent Geofencing</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      background: #f0f5ff;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+      font-family: "Segoe UI", sans-serif;
+      background: #f5f9ff;
+      margin: 0;
       padding: 20px;
     }
-
-    canvas {
-      border: 2px solid #ccc;
-      background: #fff;
-      margin-bottom: 20px;
+    .container {
+      max-width: 420px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 16px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+      text-align: center;
     }
-
+    canvas {
+      margin-top: 20px;
+      background: #e0f7fa;
+      border-radius: 12px;
+    }
     button {
-      padding: 10px 20px;
-      font-size: 16px;
-      border-radius: 8px;
-      border: none;
       background: #007bff;
       color: white;
+      border: none;
+      padding: 12px 18px;
+      font-size: 16px;
+      border-radius: 8px;
       cursor: pointer;
-      margin-bottom: 10px;
+      margin: 10px 5px 0 5px;
     }
-
-    #statusText {
-      font-size: 18px;
-      margin: 10px;
-      font-weight: bold;
+    button:hover {
+      background: #0056b3;
+    }
+    #status {
+      font-size: 16px;
+      margin-top: 15px;
+      font-weight: 500;
+      color: #333;
     }
   </style>
 </head>
 <body>
-  <h2>📍 Table Revisit Tracker</h2>
-  <canvas id="mapCanvas" width="300" height="300"></canvas>
-  <div id="statusText">⏳ Waiting for GPS...</div>
-  <button id="setTableBtn">➕ Set Current Location as Table</button>
+  <div class="container">
+    <h2>📍 Table Revisit Tracker</h2>
+    <button onclick="setTable()">➕ Set Table</button>
+    <button onclick="resetTables()">🗑️ Reset Tables</button>
+    <canvas id="map" width="350" height="350"></canvas>
+    <p id="status">Waiting for GPS...</p>
+  </div>
 
   <script>
-    const canvas = document.getElementById("mapCanvas");
+    const canvas = document.getElementById("map");
     const ctx = canvas.getContext("2d");
-    const statusText = document.getElementById("statusText");
-    let tableLocations = JSON.parse(localStorage.getItem("tables")) || [];
+    const status = document.getElementById("status");
+
+    const RADIUS_THRESHOLD = 0.5; // meters
+    const MAX_ACCEPTABLE_ACCURACY = 3.0; // meters
+    let tableLocations = JSON.parse(localStorage.getItem("tableLocations")) || [];
+    let tableCounter = tableLocations.length ? Math.max(...tableLocations.map(t => t.id)) + 1 : 1;
     let currentLocation = null;
 
-    const radius = 1.5; // meters
-    const smoothHistory = [];
-    const maxHistoryLength = 5;
-
-    function toRad(deg) {
-      return (deg * Math.PI) / 180;
-    }
-
-    function haversine(lat1, lon1, lat2, lon2) {
-      const R = 6371000; // meters
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+      const toRad = angle => angle * Math.PI / 180;
+      const R = 6371e3; // meters
       const dLat = toRad(lat2 - lat1);
       const dLon = toRad(lon2 - lon1);
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
+      const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    function getSmoothedPosition(newPos) {
-      if (!newPos) return null;
-      smoothHistory.push(newPos);
-      if (smoothHistory.length > maxHistoryLength) smoothHistory.shift();
-
-      const avgLat = smoothHistory.reduce((sum, p) => sum + p.lat, 0) / smoothHistory.length;
-      const avgLng = smoothHistory.reduce((sum, p) => sum + p.lng, 0) / smoothHistory.length;
-
-      return { lat: avgLat, lng: avgLng };
-    }
-
-    function isRevisit(pos) {
-      return tableLocations.some((table) => {
-        const dist = haversine(pos.lat, pos.lng, table.lat, table.lng);
-        return dist <= radius;
-      });
-    }
-
-    function updateCanvas() {
+    function drawMap(userLoc) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const centerX = canvas.width / 2;
       const centerY = canvas.height / 2;
 
-      // Draw saved table zones
-      tableLocations.forEach((table) => {
-        const dx = (table.lng - currentLocation.lng) * 100000;
-        const dy = (table.lat - currentLocation.lat) * -100000;
-        ctx.beginPath();
-        ctx.strokeStyle = "green";
-        ctx.arc(centerX + dx, centerY + dy, radius * 10, 0, Math.PI * 2);
-        ctx.stroke();
-      });
-
       // Draw user location
       ctx.beginPath();
-      ctx.fillStyle = "blue";
-      ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
+      ctx.fillStyle = "#007bff";
+      ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
       ctx.fill();
+
+      // Draw saved tables
+      tableLocations.forEach((table) => {
+        const dx = (table.lng - userLoc.lng) * 111320;
+        const dy = (table.lat - userLoc.lat) * 110540;
+        const scale = 2; // pixels per meter
+        const x = centerX + dx * scale;
+        const y = centerY - dy * scale;
+
+        ctx.beginPath();
+        ctx.fillStyle = "#ff5722";
+        ctx.arc(x, y, 8, 0, 2 * Math.PI);
+        ctx.fill();
+
+        ctx.fillStyle = "#000";
+        ctx.font = "12px sans-serif";
+        ctx.fillText("T" + table.id, x - 10, y - 12);
+      });
     }
 
-    function checkPosition() {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition((position) => {
-          const newPos = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          };
-          currentLocation = getSmoothedPosition(newPos);
-          if (!currentLocation) return;
+    function findNearbyTable(location) {
+      for (let table of tableLocations) {
+        const dist = haversineDistance(location.lat, location.lng, table.lat, table.lng);
+        if (dist <= RADIUS_THRESHOLD) return table;
+      }
+      return null;
+    }
 
-          const revisit = isRevisit(currentLocation);
-          statusText.innerHTML = revisit
-            ? `<span style="color: green;">✅ Revisit</span>`
-            : `<span style="color: blue;">🆕 New Location</span>`;
+    function setTable() {
+      if (!currentLocation) {
+        alert("Please wait for GPS to stabilize.");
+        return;
+      }
 
-          updateCanvas();
-        });
-      } else {
-        statusText.innerText = "❌ Geolocation not supported.";
+      tableLocations.push({ ...currentLocation, id: tableCounter++ });
+      localStorage.setItem("tableLocations", JSON.stringify(tableLocations));
+      status.textContent = `✅ Table T${tableCounter - 1} saved to memory.`;
+    }
+
+    function resetTables() {
+      if (confirm("Are you sure you want to clear all saved tables?")) {
+        tableLocations = [];
+        tableCounter = 1;
+        localStorage.removeItem("tableLocations");
+        status.textContent = "🗑️ All tables cleared.";
       }
     }
 
-    document.getElementById("setTableBtn").addEventListener("click", () => {
-      if (currentLocation) {
-        tableLocations.push(currentLocation);
-        localStorage.setItem("tables", JSON.stringify(tableLocations));
-        alert("📌 Table location saved!");
-        updateCanvas();
-      }
-    });
+    function checkLocation() {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const { latitude, longitude, accuracy } = pos.coords;
 
-    // Auto-check every second
-    setInterval(checkPosition, 1000);
+        if (accuracy > MAX_ACCEPTABLE_ACCURACY) {
+          status.textContent = `⚠️ Poor GPS accuracy (${accuracy.toFixed(1)}m)...`;
+          return;
+        }
+
+        currentLocation = { lat: latitude, lng: longitude };
+        drawMap(currentLocation);
+
+        const nearby = findNearbyTable(currentLocation);
+        if (nearby) {
+          status.textContent = `✅ You're at Table T${nearby.id}`;
+        } else {
+          status.textContent = "🆕 New Location (not at any table)";
+        }
+
+      }, err => {
+        status.textContent = "❌ GPS error: " + err.message;
+      });
+    }
+
+    // Start tracking GPS every 1 second
+    setInterval(checkLocation, 1000);
   </script>
 </body>
 </html>
