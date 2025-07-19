@@ -59,7 +59,7 @@
     const ctx = canvas.getContext("2d");
     const status = document.getElementById("status");
 
-    const RADIUS_THRESHOLD = 5; // meters
+    const RADIUS_THRESHOLD = 10; // meters
     let tableLocations = JSON.parse(localStorage.getItem("tableLocations")) || [];
     let tableCounter = tableLocations.length ? Math.max(...tableLocations.map(t => t.id)) + 1 : 1;
     let currentLocation = null;
