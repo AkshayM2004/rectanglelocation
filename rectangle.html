@@ -1,162 +1,43 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>📍 Table Location Tracker (with Accuracy Buffer)</title>
+  <title>Room Position Tracker using Web AR</title>
+  <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/aframe/build/aframe-ar.min.js"></script>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #eef2f5;
-      text-align: center;
-      padding: 20px;
+    body, html {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
     }
-    canvas {
-      border: 1px solid #333;
-      margin-top: 10px;
-    }
-    button {
-      margin: 10px;
-      padding: 10px 20px;
-      font-size: 16px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    .set {
-      background: #4CAF50;
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.5);
       color: white;
-    }
-    .reset {
-      background: #f44336;
-      color: white;
+      padding: 10px;
+      font-size: 14px;
+      z-index: 999;
     }
   </style>
 </head>
 <body>
-  <h2>📍 Table Location Tracker (with Accuracy Buffer)</h2>
-  <button class="set" onclick="setTableHere()">➕ Set Table Here</button>
-  <button class="reset" onclick="resetTables()">🗑 Reset Tables</button>
-  <div>
-    <label><input type="checkbox" id="showAccuracy" checked> 🆕 New Location (±<span id="bufferDisplay">2.5</span>m buffer)</label>
-  </div>
-  <canvas id="canvas" width="400" height="400"></canvas>
+  <div id="info">Move your phone around the room to detect your position using AR (marker-based). You can place virtual tables using the marker.</div>
 
-  <script>
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+  <a-scene embedded arjs>
+    <!-- Define your custom marker (or use default "hiro" marker) -->
+    <a-marker preset="hiro">
+      <a-box position="0 0.5 0" material="color: red;"></a-box>
+      <a-text value="Table 1" position="-0.5 1 0" color="white"></a-text>
+    </a-marker>
 
-    const bufferRadiusMeters = 2.5;
-    document.getElementById('bufferDisplay').textContent = bufferRadiusMeters.toFixed(1);
+    <a-marker preset="kanji">
+      <a-box position="0 0.5 0" material="color: green;"></a-box>
+      <a-text value="Table 2" position="-0.5 1 0" color="white"></a-text>
+    </a-marker>
 
-    let tables = JSON.parse(localStorage.getItem('tables')) || [];
-    let currentLocation = null;
-
-    // Convert meters to canvas pixels (approximate scale)
-    const meterToPixel = 1; // You can adjust this based on zoom (1 = 1px/meter)
-
-    function toCanvasCoords(lat, lng, centerLat, centerLng) {
-      const scale = 111111; // Approx. meters per degree
-      const x = (lng - centerLng) * scale;
-      const y = (lat - centerLat) * scale;
-      return {
-        x: canvas.width / 2 + x * meterToPixel,
-        y: canvas.height / 2 - y * meterToPixel
-      };
-    }
-
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      if (!currentLocation) return;
-
-      const centerLat = currentLocation.lat;
-      const centerLng = currentLocation.lng;
-
-      // Draw all tables
-      for (let table of tables) {
-        const pt = toCanvasCoords(table.lat, table.lng, centerLat, centerLng);
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 5, 0, 2 * Math.PI);
-        ctx.fillStyle = 'green';
-        ctx.fill();
-
-        // Draw buffer circle
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, bufferRadiusMeters * meterToPixel, 0, 2 * Math.PI);
-        ctx.strokeStyle = 'rgba(0,255,0,0.3)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-
-      // Draw current location
-      const curr = toCanvasCoords(currentLocation.lat, currentLocation.lng, centerLat, centerLng);
-      ctx.beginPath();
-      ctx.arc(curr.x, curr.y, 5, 0, 2 * Math.PI);
-      ctx.fillStyle = 'blue';
-      ctx.fill();
-    }
-
-    function haversine(lat1, lng1, lat2, lng2) {
-      const R = 6371000; // radius in meters
-      const toRad = angle => angle * Math.PI / 180;
-      const dLat = toRad(lat2 - lat1);
-      const dLng = toRad(lng2 - lng1);
-      const a = Math.sin(dLat / 2) ** 2 +
-                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-                Math.sin(dLng / 2) ** 2;
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    }
-
-    function checkTableProximity() {
-      if (!currentLocation) return;
-
-      for (let table of tables) {
-        const d = haversine(currentLocation.lat, currentLocation.lng, table.lat, table.lng);
-        if (d <= bufferRadiusMeters) {
-          console.log(`✅ Inside table zone! Distance: ${d.toFixed(2)} m`);
-          return;
-        }
-      }
-      console.log(`❌ Outside all tables`);
-    }
-
-    function setTableHere() {
-      if (!currentLocation) return;
-      tables.push({ lat: currentLocation.lat, lng: currentLocation.lng });
-      localStorage.setItem('tables', JSON.stringify(tables));
-      draw();
-      alert("📌 Table location saved.");
-    }
-
-    function resetTables() {
-      if (confirm("Are you sure you want to reset all tables?")) {
-        tables = [];
-        localStorage.removeItem('tables');
-        draw();
-      }
-    }
-
-    navigator.geolocation.watchPosition(
-      position => {
-        currentLocation = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude
-        };
-        console.log("📍 Current Location:", currentLocation);
-        draw();
-        checkTableProximity();
-      },
-      err => {
-        console.error("❌ Geolocation error:", err.message);
-        alert("Unable to access GPS. Please allow location access.");
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 1000,
-        timeout: 5000
-      }
-    );
-  </script>
+    <a-entity camera></a-entity>
+  </a-scene>
 </body>
 </html>
